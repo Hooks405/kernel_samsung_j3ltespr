@@ -17,7 +17,7 @@
 
 #define TOMBAK_MBHC_NC	0
 #define TOMBAK_MBHC_NO	1
-#define WCD_MBHC_DEF_BUTTONS 5
+#define WCD_MBHC_DEF_BUTTONS 4
 
 enum wcd_mbhc_plug_type {
 	MBHC_PLUG_TYPE_INVALID = -1,
@@ -144,6 +144,7 @@ struct wcd_mbhc_cb {
 	void (*compute_impedance) (s16 , s16 , uint32_t *, uint32_t *, bool);
 	void (*set_micbias_value) (struct snd_soc_codec *);
 	void (*set_auto_zeroing) (struct snd_soc_codec *, bool);
+	void (*skip_imped_detect)(struct snd_soc_codec *);
 	struct firmware_cal * (*get_hwdep_fw_cal)(struct snd_soc_codec *,
 			enum wcd_cal_type);
 };
@@ -171,6 +172,8 @@ struct wcd_mbhc {
 	bool micbias_enable;
 	bool btn_press_intr;
 	bool is_hs_recording;
+	bool is_extn_cable;
+	bool skip_imped_detection;
 
 	struct snd_soc_codec *codec;
 	/* Work to perform MBHC Firmware Read */

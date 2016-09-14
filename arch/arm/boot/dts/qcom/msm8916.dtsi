@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -776,6 +776,7 @@
 	qcom,wdt@b017000 {
 		compatible = "qcom,msm-watchdog";
 		reg = <0xb017000 0x1000>;
+		qcom,memblock-reserve = <0x0 0x4000>; /*reserved 16kb for WA for Secure Storage TZ app */
 		reg-names = "wdt-base";
 		interrupts = <0 3 0>, <0 4 0>;
 		qcom,bark-time = <11000>;
@@ -804,7 +805,6 @@
 			qcom,smd-irq-bitmask = <0x1000>;
 			interrupts = <0 25 1>;
 			label = "modem";
-			qcom,not-loadable;
 		};
 
 		qcom,smsm-modem {
@@ -1678,11 +1678,6 @@
 		/* GPIO output to mss */
 		qcom,gpio-force-stop = <&smp2pgpio_ssr_smp2p_1_out 0 0>;
 		linux,contiguous-region = <&modem_adsp_mem>;
-
-		mba_mss: qcom,mba-mem@0 {
-			compatible = "qcom,pil-mba-mem";
-			linux,contiguous-region = <&mba_mem>;
-		};
 	};
 
 	qcom,vidc@1d00000 {

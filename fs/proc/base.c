@@ -1345,13 +1345,12 @@ static const struct file_operations proc_pid_sched_operations = {
 
 #endif
 
+#ifdef CONFIG_SCHED_HMP
+
 /*
  * Print out various scheduling related per-task fields:
  */
-
-#ifdef CONFIG_SMP
-
-static int sched_wake_up_idle_show(struct seq_file *m, void *v)
+static int sched_init_task_load_show(struct seq_file *m, void *v)
 {
 	struct inode *inode = m->private;
 	struct task_struct *p;
@@ -1360,7 +1359,7 @@ static int sched_wake_up_idle_show(struct seq_file *m, void *v)
 	if (!p)
 		return -ESRCH;
 
-	seq_printf(m, "%d\n", sched_get_wake_up_idle(p));
+	seq_printf(m, "%d\n", sched_get_init_task_load(p));
 
 	put_task_struct(p);
 
@@ -1368,13 +1367,13 @@ static int sched_wake_up_idle_show(struct seq_file *m, void *v)
 }
 
 static ssize_t
-sched_wake_up_idle_write(struct file *file, const char __user *buf,
+sched_init_task_load_write(struct file *file, const char __user *buf,
 	    size_t count, loff_t *offset)
 {
 	struct inode *inode = file_inode(file);
 	struct task_struct *p;
 	char buffer[PROC_NUMBUF];
-	int wake_up_idle, err;
+	int init_task_load, err;
 
 	memset(buffer, 0, sizeof(buffer));
 	if (count > sizeof(buffer) - 1)
@@ -1384,7 +1383,7 @@ sched_wake_up_idle_write(struct file *file, const char __user *buf,
 		goto out;
 	}
 
-	err = kstrtoint(strstrip(buffer), 0, &wake_up_idle);
+	err = kstrtoint(strstrip(buffer), 0, &init_task_load);
 	if (err)
 		goto out;
 
@@ -1392,7 +1391,7 @@ sched_wake_up_idle_write(struct file *file, const char __user *buf,
 	if (!p)
 		return -ESRCH;
 
-	err = sched_set_wake_up_idle(p, wake_up_idle);
+	err = sched_set_init_task_load(p, init_task_load);
 
 	put_task_struct(p);
 
@@ -1400,20 +1399,20 @@ out:
 	return err < 0 ? err : count;
 }
 
-static int sched_wake_up_idle_open(struct inode *inode, struct file *filp)
+static int sched_init_task_load_open(struct inode *inode, struct file *filp)
 {
-	return single_open(filp, sched_wake_up_idle_show, inode);
+	return single_open(filp, sched_init_task_load_show, inode);
 }
 
-static const struct file_operations proc_pid_sched_wake_up_idle_operations = {
-	.open		= sched_wake_up_idle_open,
+static const struct file_operations proc_pid_sched_init_task_load_operations = {
+	.open		= sched_init_task_load_open,
 	.read		= seq_read,
-	.write		= sched_wake_up_idle_write,
+	.write		= sched_init_task_load_write,
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
 
-#endif	/* CONFIG_SMP */
+#endif	/* CONFIG_SCHED_HMP */
 
 #ifdef CONFIG_SCHED_AUTOGROUP
 /*
@@ -2764,8 +2763,8 @@ static const struct pid_entry tgid_base_stuff[] = {
 	ONE("status",     S_IRUGO, proc_pid_status),
 	ONE("personality", S_IRUGO, proc_pid_personality),
 	INF("limits",	  S_IRUGO, proc_pid_limits),
-#ifdef CONFIG_SMP
-	REG("sched_wake_up_idle",      S_IRUGO|S_IWUSR, proc_pid_sched_wake_up_idle_operations),
+#ifdef CONFIG_SCHED_HMP
+	REG("sched_init_task_load",      S_IRUGO|S_IWUSR, proc_pid_sched_init_task_load_operations),
 #endif
 #ifdef CONFIG_SCHED_DEBUG
 	REG("sched",      S_IRUGO|S_IWUSR, proc_pid_sched_operations),
@@ -2797,6 +2796,7 @@ static const struct pid_entry tgid_base_stuff[] = {
 #ifdef CONFIG_PROC_PAGE_MONITOR
 	REG("clear_refs", S_IWUSR, proc_clear_refs_operations),
 	REG("smaps",      S_IRUGO, proc_pid_smaps_operations),
+	REG("smaps_simple", S_IRUGO, proc_pid_smaps_simple_operations),
 	REG("pagemap",    S_IRUGO, proc_pagemap_operations),
 #endif
 #ifdef CONFIG_SECURITY

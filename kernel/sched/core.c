@@ -82,6 +82,9 @@
 #ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>
 #endif
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
 
 #include "sched.h"
 #include "../workqueue_internal.h"
@@ -1209,9 +1212,9 @@ unsigned int min_max_freq = 1;
 
 unsigned int max_capacity = 1024; /* max(rq->capacity) */
 unsigned int min_capacity = 1024; /* min(rq->capacity) */
-unsigned int max_load_scale_factor = 1024; /* max possible load scale factor */
-unsigned int max_possible_capacity = 1024; /* max(rq->max_possible_capacity) */
-unsigned int min_max_possible_capacity = 1024; /* min(max_possible_capacity) */
+unsigned int max_load_scale_factor = 1024; /* max possible load scale factor */ 
+unsigned int max_possible_capacity = 1024; /* max(rq->max_possible_capacity) */ 
+unsigned int min_max_possible_capacity = 1024; /* min(max_possible_capacity) */ 
 unsigned int min_max_capacity_delta_pct;
 
 /* Window size (in ns) */
@@ -1227,8 +1230,6 @@ __read_mostly unsigned int sched_ravg_window = 10000000;
 unsigned int __read_mostly sched_disable_window_stats;
 
 static unsigned int sync_cpu;
-static u64 sched_init_jiffy;
-static u64 sched_clock_at_init_jiffy;
 
 #define EXITING_TASK_MARKER	0xdeaddead
 
@@ -1909,23 +1910,16 @@ static inline void mark_task_starting(struct task_struct *p)
 	p->ravg.mark_start = wallclock;
 }
 
-static int update_alignment;
-
 static inline void set_window_start(struct rq *rq)
 {
 	int cpu = cpu_of(rq);
 	struct rq *sync_rq = cpu_rq(sync_cpu);
 
-	if (cpu == sync_cpu && !update_alignment) {
-		sched_init_jiffy = get_jiffies_64();
-		sched_clock_at_init_jiffy = sched_clock();
-	}
-
 	if (rq->window_start || !sched_enable_hmp)
 		return;
 
 	if (cpu == sync_cpu) {
-		rq->window_start = sched_clock_at_init_jiffy;
+		rq->window_start = sched_clock();
 	} else {
 		raw_spin_unlock(&rq->lock);
 		double_rq_lock(rq, sync_rq);
@@ -2180,20 +2174,29 @@ void sched_set_io_is_busy(int val)
 
 int sched_set_window(u64 window_start, unsigned int window_size)
 {
-	u64 ws, now;
+	u64 now, cur_jiffies, jiffy_sched_clock;
+	s64 ws;
+	unsigned long flags;
 
 	if (sched_use_pelt ||
 		 (window_size * TICK_NSEC <  MIN_SCHED_RAVG_WINDOW))
 			return -EINVAL;
 
 	mutex_lock(&policy_mutex);
-	update_alignment = 1;
 
-	ws = (window_start - sched_init_jiffy); /* jiffy difference */
+	/* Get a consistent view of sched_clock, jiffies, and the time
+	 * since the last jiffy (based on last_jiffies_update). */
+	local_irq_save(flags);
+	cur_jiffies = jiffy_to_sched_clock(&now, &jiffy_sched_clock);
+	local_irq_restore(flags);
+
+	/* translate window_start from jiffies to nanoseconds */
+	ws = (window_start - cur_jiffies); /* jiffy difference */
 	ws *= TICK_NSEC;
-	ws += sched_clock_at_init_jiffy;
+	ws += jiffy_sched_clock;
 
-	now = sched_clock();
+	/* roll back calculated window start so that it is in
+	 * the past (window stats must have a current window) */
 	while (ws > now)
 		ws -= (window_size * TICK_NSEC);
 
@@ -2471,7 +2474,6 @@ static int cpufreq_notifier_policy(struct notifier_block *nb,
 	}
 
 	update_min_max_capacity();
-
 	post_big_small_task_count_change(cpu_possible_mask);
 
 	return 0;
@@ -3008,13 +3010,13 @@ void scheduler_ipi(void)
 			&& !got_boost_kick())
 		return;
 
-	if (got_boost_kick()) {
-		struct rq *rq = cpu_rq(cpu);
-
-		if (rq->curr->sched_class == &fair_sched_class)
-			check_for_migration(rq, rq->curr);
-		clear_boost_kick(cpu);
-	}
+	if (!sched_orig_load_balance_enable)
+		if (got_boost_kick()) {
+			struct rq *rq = cpu_rq(cpu);
+			if (rq->curr->sched_class == &fair_sched_class)
+				check_for_migration(rq, rq->curr);
+			clear_boost_kick(cpu);
+		}
 
 
 	/*
@@ -3769,6 +3771,13 @@ unsigned long this_cpu_load(void)
 	return this->cpu_load[0];
 }
 
+#ifdef CONFIG_RUNTIME_COMPCACHE
+unsigned long this_cpu_loadx(int i)
+{
+	struct rq *this = this_rq();
+	return this->cpu_load[i];
+}
+#endif /* CONFIG_RUNTIME_COMPCACHE */
 
 /*
  * Global load-average calculations
@@ -4449,8 +4458,10 @@ void scheduler_tick(void)
 	trigger_load_balance(rq, cpu);
 #endif
 	rq_last_tick_reset(rq);
-	if (curr->sched_class == &fair_sched_class)
-		check_for_migration(rq, curr);
+
+	if (!sched_orig_load_balance_enable)
+		if (curr->sched_class == &fair_sched_class)
+			check_for_migration(rq, curr);
 }
 
 #ifdef CONFIG_NO_HZ_FULL
@@ -4737,6 +4748,10 @@ need_resched:
 		 */
 		cpu = smp_processor_id();
 		rq = cpu_rq(cpu);
+#ifdef CONFIG_SEC_DEBUG
+		sec_debug_task_sched_log(cpu, rq->curr);
+#endif
+
 	} else
 		raw_spin_unlock_irq(&rq->lock);
 
@@ -8898,6 +8913,9 @@ void __init sched_init(void)
 {
 	int i, j;
 	unsigned long alloc_size = 0, ptr;
+
+	sec_gaf_supply_rqinfo(offsetof(struct rq, curr),
+						  offsetof(struct cfs_rq, rq));
 
 	if (sched_enable_hmp)
 		pr_info("HMP scheduling enabled.\n");

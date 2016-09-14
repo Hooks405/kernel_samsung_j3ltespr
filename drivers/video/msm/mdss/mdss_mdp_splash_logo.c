@@ -266,6 +266,17 @@ int mdss_mdp_splash_cleanup(struct msm_fb_data_type *mfd,
 
 	mdss_mdp_ctl_splash_finish(ctl, mdp5_data->handoff);
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG) && defined(CONFIG_SEC_DEBUG)
+	if (!sec_debug_is_enabled()) {
+		if (mdp5_data->splash_mem_addr) {
+			/* Give back the reserved memory to the system */
+			memblock_free(mdp5_data->splash_mem_addr,
+						mdp5_data->splash_mem_size);
+			mdss_free_bootmem(mdp5_data->splash_mem_addr,
+						mdp5_data->splash_mem_size);
+		}
+	}
+#else
 	if (mdp5_data->splash_mem_addr) {
 		/* Give back the reserved memory to the system */
 		memblock_free(mdp5_data->splash_mem_addr,
@@ -273,6 +284,7 @@ int mdss_mdp_splash_cleanup(struct msm_fb_data_type *mfd,
 		mdss_free_bootmem(mdp5_data->splash_mem_addr,
 					mdp5_data->splash_mem_size);
 	}
+#endif
 
 	mdss_mdp_footswitch_ctrl_splash(0);
 end:
@@ -620,20 +632,20 @@ static __ref int mdss_mdp_splash_parse_dt(struct msm_fb_data_type *mfd)
 	}
 
 	if (!memblock_is_reserved(offsets[0])) {
-		pr_debug("failed to reserve memory for fb splash\n");
+		pr_err("failed to reserve memory for fb splash\n");
 		rc = -EINVAL;
 		goto error;
 	}
 
 	mdp5_mdata->splash_mem_addr = offsets[0];
 	mdp5_mdata->splash_mem_size = offsets[1];
-	pr_debug("memaddr=%x size=%x\n", mdp5_mdata->splash_mem_addr,
+	pr_err("memaddr=%x size=%x\n", mdp5_mdata->splash_mem_addr,
 		mdp5_mdata->splash_mem_size);
 
 error:
 	if (!rc && !mfd->panel_info->cont_splash_enabled &&
 		mdp5_mdata->splash_mem_addr) {
-		pr_debug("mem reservation not reqd if cont splash disabled\n");
+		pr_err("mem reservation not reqd if cont splash disabled\n");
 		memblock_free(mdp5_mdata->splash_mem_addr,
 					mdp5_mdata->splash_mem_size);
 		mdss_free_bootmem(mdp5_mdata->splash_mem_addr,

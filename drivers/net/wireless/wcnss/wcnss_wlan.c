@@ -2586,11 +2586,41 @@ static ssize_t wcnss_ctrl_write(struct file *fp, const char __user
 	return rc;
 }
 
+static ssize_t wcnss_ctrl_read(struct file *fp, char __user *user_buffer,
+			size_t count, loff_t *position)
+{
+	int rc = 0;
+
+	if (!penv || !penv->device_opened)
+		return -EFAULT;
+
+	rc = wait_event_interruptible(penv->wlan_config.wcnss_ctrl_wait,
+		(penv->wlan_config.irisStatus == IRIS_DETECTION_SUCCESS
+		|| penv->wlan_config.irisStatus == IRIS_DETECTION_FAIL));
+
+	if (rc < 0)
+		return rc;
+
+	mutex_lock(&penv->ctrl_lock);
+	count = sizeof(penv->wlan_config.irisStatus);
+
+	rc = copy_to_user(user_buffer,
+			(void *)&(penv->wlan_config.irisStatus), count);
+
+	mutex_unlock(&penv->ctrl_lock);
+
+	pr_info("%s: iris detection status: %d\n", __func__,
+	penv->wlan_config.irisStatus);
+
+	return rc;
+}
+
 
 static const struct file_operations wcnss_ctrl_fops = {
 	.owner = THIS_MODULE,
 	.open = wcnss_ctrl_open,
 	.write = wcnss_ctrl_write,
+	.read = wcnss_ctrl_read,
 };
 
 static struct miscdevice wcnss_usr_ctrl = {
@@ -2936,6 +2966,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 		penv->fw_vbatt_state = WCNSS_CONFIG_UNSPECIFIED;
 	}
 
+	
 	snoc_qosgen = clk_get(&pdev->dev, "snoc_qosgen");
 
 	if (IS_ERR(snoc_qosgen)) {
@@ -2947,7 +2978,7 @@ wcnss_trigger_config(struct platform_device *pdev)
 			pr_info("snoc_qosgen configured successfully\n");
 		}
 	}
-
+	
 	do {
 		/* trigger initialization of the WCNSS */
 		penv->pil = subsystem_get(WCNSS_PIL_DEVICE);
@@ -3212,6 +3243,7 @@ wcnss_wlan_probe(struct platform_device *pdev)
 	mutex_init(&penv->vbat_monitor_mutex);
 	mutex_init(&penv->pm_qos_mutex);
 	init_waitqueue_head(&penv->read_wait);
+	init_waitqueue_head(&penv->wlan_config.wcnss_ctrl_wait);
 
 	/* Since we were built into the kernel we'll be called as part
 	 * of kernel initialization.  We don't know if userspace

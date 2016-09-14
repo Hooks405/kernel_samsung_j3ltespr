@@ -46,6 +46,9 @@
 #define FORMAT_EAC3         0x0014
 #define FORMAT_MP2          0x0015
 #define FORMAT_FLAC         0x0016
+#define FORMAT_ALAC         0x0017
+#define FORMAT_VORBIS       0x0018
+#define FORMAT_APE          0x0019
 
 #define ENCDEC_SBCBITRATE   0x0001
 #define ENCDEC_IMMEDIATE_DECODE 0x0002
@@ -383,6 +386,15 @@ int q6asm_media_format_block_amrwbplus(struct audio_client *ac,
 int q6asm_stream_media_format_block_flac(struct audio_client *ac,
 			struct asm_flac_cfg *cfg, int stream_id);
 
+int q6asm_media_format_block_alac(struct audio_client *ac,
+			struct asm_alac_cfg *cfg, int stream_id);
+
+int q6asm_stream_media_format_block_vorbis(struct audio_client *ac,
+			struct asm_vorbis_cfg *cfg, int stream_id);
+
+int q6asm_media_format_block_ape(struct audio_client *ac,
+			struct asm_ape_cfg *cfg, int stream_id);
+
 int q6asm_ds1_set_endp_params(struct audio_client *ac,
 				int param_id, int param_value);
 
@@ -451,5 +463,14 @@ int q6asm_send_mtmx_strtr_window(struct audio_client *ac,
 		struct asm_session_mtmx_strtr_param_window_v2_t *window_param,
 		uint32_t param_id);
 
+#ifdef CONFIG_SAMSUNG_AUDIO
+int q6asm_set_sa(struct audio_client *ac,int *param);
+int q6asm_set_vsp(struct audio_client *ac,int *param);
+int q6asm_set_dha(struct audio_client *ac,int *param);
+int q6asm_set_lrsm(struct audio_client *ac,int *param);
+int q6asm_set_sa_ep(struct audio_client *ac,int *param);
+int q6asm_get_sa_ep(struct audio_client *ac);
+int q6asm_set_msp(struct audio_client *ac,int *param);
+#endif /* CONFIG_SAMSUNG_AUDIO */
 
 #endif /* __Q6_ASM_H__ */

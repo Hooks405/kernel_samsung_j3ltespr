@@ -914,6 +914,9 @@ i2c_msm_qup_state_wait_valid(struct i2c_msm_ctrl *ctrl,
 {
 	u32 status;
 	void __iomem  *base     = ctrl->rsrcs.base;
+	unsigned long  start   = jiffies;
+	unsigned long  timeout = start +
+				 msecs_to_jiffies(I2C_MSM_MAX_POLL_MSEC);
 	int ret      = 0;
 	int read_cnt = 0;
 
@@ -935,14 +938,7 @@ i2c_msm_qup_state_wait_valid(struct i2c_msm_ctrl *ctrl,
 				goto poll_valid_end;
 		}
 
-		/*
-		 * Sleeping for 1-1.5 ms for every 100 iterations and break if
-		 * iterations crosses the 1500 marks allows roughly 10-15 msec
-		 * of time to get the core to valid state.
-		 */
-		if (!(read_cnt % 100))
-			usleep_range(1000, 1500);
-	} while (read_cnt <= 1500);
+	} while (time_before_eq(jiffies, timeout));
 
 	ret = -ETIMEDOUT;
 	dev_err(ctrl->dev,
@@ -2781,10 +2777,10 @@ static irqreturn_t i2c_msm_qup_isr(int irq, void *devid)
 
 		/* HW workaround: when interrupt is level triggerd, more
 		 * than one interrupt may fire in error cases. Thus we
-		 * change the QUP core state to Reset immediately in the
-		 * ISR to ward off the next interrupt.
+		 * resetting the QUP core state immediately in the ISR
+		 * to ward off the next interrupt.
 		 */
-		writel_relaxed(QUP_STATE_RESET, ctrl->rsrcs.base + QUP_STATE);
+		i2c_msm_qup_state_set(ctrl, QUP_STATE_RESET);
 
 		need_wmb        = true;
 		signal_complete = true;
@@ -2900,7 +2896,9 @@ static int i2c_msm_qup_init(struct i2c_msm_ctrl *ctrl)
 	i2c_msm_qup_sw_reset(ctrl);
 	i2c_msm_qup_state_set(ctrl, QUP_STATE_RESET);
 
-	writel_relaxed(QUP_N_VAL | QUP_MINI_CORE_I2C_VAL, base + QUP_CONFIG);
+	writel_relaxed(QUP_APP_CLK_ON_EN | QUP_CORE_CLK_ON_EN |
+				QUP_FIFO_CLK_GATE_EN,
+				base + QUP_CONFIG);
 
 	writel_relaxed(QUP_OUTPUT_OVER_RUN_ERR_EN | QUP_INPUT_UNDER_RUN_ERR_EN
 		     | QUP_OUTPUT_UNDER_RUN_ERR_EN | QUP_INPUT_OVER_RUN_ERR_EN,
@@ -3021,13 +3019,6 @@ static int i2c_msm_qup_post_xfer(struct i2c_msm_ctrl *ctrl, int err)
 		}
 	}
 
-	/*
-	 * Disable the IRQ before change to reset state to avoid
-	 * spurious interrupts.
-	 *
-	 */
-	disable_irq(ctrl->rsrcs.irq);
-
 	/* flush bam data and reset the qup core in timeout error.
 	 * for other error case, its handled by the ISR
 	 */
@@ -3037,8 +3028,8 @@ static int i2c_msm_qup_post_xfer(struct i2c_msm_ctrl *ctrl, int err)
 			writel_relaxed(QUP_I2C_FLUSH, ctrl->rsrcs.base
 								+ QUP_STATE);
 
-		/* reset the qup core */
-		i2c_msm_qup_state_set(ctrl, QUP_STATE_RESET);
+		/* reset the sw core */
+		i2c_msm_qup_sw_reset(ctrl);
 		err = -ETIMEDOUT;
 	}
 
@@ -3349,6 +3340,7 @@ static void i2c_msm_pm_xfer_end(struct i2c_msm_ctrl *ctrl)
 	struct i2c_msm_bam_pipe      *prod = &bam->pipe[I2C_MSM_BAM_PROD];
 	struct i2c_msm_bam_pipe      *cons = &bam->pipe[I2C_MSM_BAM_CONS];
 
+	disable_irq(ctrl->rsrcs.irq);
 
 	atomic_set(&ctrl->xfer.is_active, 0);
 
@@ -3682,7 +3674,12 @@ static void i2c_msm_pm_pinctrl_state(struct i2c_msm_ctrl *ctrl,
 		pins_state      = ctrl->rsrcs.gpio_state_suspend;
 		pins_state_name = I2C_MSM_PINCTRL_SUSPEND;
 	}
-
+#if defined(CONFIG_SEC_E5_PROJECT) && defined(CONFIG_TOUCHSCREEN_MMS300) // for ISP firmup in Melfas
+	if (!IS_ERR_OR_NULL(ctrl->dev->of_node->child) && (strncmp(ctrl->dev->of_node->child->name,"mms300-ts",sizeof("mms300-ts")) == 0)) {
+		dev_info(ctrl->dev,"TSP(mms300-ts) i2c pinctrl was ignored");
+		return;
+	}
+#endif
 	if (!IS_ERR_OR_NULL(pins_state)) {
 		int ret = pinctrl_select_state(ctrl->rsrcs.pinctrl, pins_state);
 		if (ret)

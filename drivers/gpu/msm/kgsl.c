@@ -1045,7 +1045,8 @@ static int kgsl_close_device(struct kgsl_device *device)
 		/* Fail if the wait times out */
 		BUG_ON(atomic_read(&device->active_cnt) > 0);
 
-		result = kgsl_pwrctrl_change_state(device, KGSL_STATE_INIT);
+		result = device->ftbl->stop(device);
+		kgsl_pwrctrl_change_state(device, KGSL_STATE_INIT);
 	}
 	mutex_unlock(&device->mutex);
 	return result;
@@ -1136,10 +1137,8 @@ static int kgsl_open_device(struct kgsl_device *device)
 	}
 	device->open_count++;
 err:
-	if (result) {
-		kgsl_pwrctrl_change_state(device, KGSL_STATE_INIT);
+	if (result)
 		atomic_dec(&device->active_cnt);
-	}
 
 	mutex_unlock(&device->mutex);
 	return result;
@@ -1574,30 +1573,60 @@ static void _kgsl_cmdbatch_timer(unsigned long data)
 	struct kgsl_device *device;
 	struct kgsl_cmdbatch *cmdbatch = (struct kgsl_cmdbatch *) data;
 	struct kgsl_cmdbatch_sync_event *event;
+	struct adreno_context *drawctxt;
 
 	if (cmdbatch == NULL || cmdbatch->context == NULL)
 		return;
+
+	drawctxt = ADRENO_CONTEXT(cmdbatch->context);
+	/* We are in timer context, this can be non-bh */
+	spin_lock(&drawctxt->lock);
+	set_bit(ADRENO_CONTEXT_CMDBATCH_FLAG_FENCE_LOG,
+		&drawctxt->flags);
+	spin_lock(&cmdbatch->lock);
+	if (list_empty(&cmdbatch->synclist))
+		goto done;
 
 	device = cmdbatch->context->device;
 
 	dev_err(device->dev,
 		"kgsl: possible gpu syncpoint deadlock for context %d timestamp %d\n",
 		cmdbatch->context->id, cmdbatch->timestamp);
+	dev_err(device->dev, " Active sync points:\n");
 
-	set_bit(CMDBATCH_FLAG_FENCE_LOG, &cmdbatch->priv);
-	kgsl_context_dump(cmdbatch->context);
-	clear_bit(CMDBATCH_FLAG_FENCE_LOG, &cmdbatch->priv);
-
-	spin_lock(&cmdbatch->lock);
-	/* Print all the fences */
+	/* Print all the pending sync objects */
 	list_for_each_entry(event, &cmdbatch->synclist, node) {
-			if (KGSL_CMD_SYNCPOINT_TYPE_FENCE == event->type &&
-					event->handle && event->handle->fence)
-					kgsl_sync_fence_log(event->handle->fence);
-	}
-	spin_unlock(&cmdbatch->lock);
-	dev_err(device->dev, "--gpu syncpoint deadlock print end--\n");
+		switch (event->type) {
+		case KGSL_CMD_SYNCPOINT_TYPE_TIMESTAMP: {
+			unsigned int retired;
 
+			kgsl_readtimestamp(event->device,
+				event->context, KGSL_TIMESTAMP_RETIRED,
+					&retired);
+
+			dev_err(device->dev,
+				"  [timestamp] context %d timestamp %d (retired %d)\n",
+				event->context->id, event->timestamp, retired);
+			break;
+		}
+		case KGSL_CMD_SYNCPOINT_TYPE_FENCE:
+			if (event->handle && event->handle->fence) {
+				set_bit(CMDBATCH_FLAG_FENCE_LOG,
+					&cmdbatch->priv);
+				sync_fence_log(event->handle->fence);
+				clear_bit(CMDBATCH_FLAG_FENCE_LOG,
+					&cmdbatch->priv);
+			} else
+				dev_err(device->dev, "  fence: invalid\n");
+			break;
+		}
+	}
+
+done:
+	spin_unlock(&cmdbatch->lock);
+	clear_bit(ADRENO_CONTEXT_CMDBATCH_FLAG_FENCE_LOG,
+		&drawctxt->flags);
+	spin_unlock(&drawctxt->lock);
 }
 
 /**
@@ -4366,6 +4395,18 @@ static int kgsl_mmap(struct file *file, struct vm_area_struct *vma)
 
 	vma->vm_private_data = entry;
 
+#ifdef CONFIG_TIMA_RKP
+        if (vma->vm_end - vma->vm_start) {
+                /* iommu optimization- needs to be turned ON from
+                * the tz side.
+                */
+                cpu_v7_tima_iommu_opt(vma->vm_start, vma->vm_end, (unsigned long)__pa((unsigned long)vma->vm_mm->pgd));
+                __asm__ __volatile__ (
+                "mcr    p15, 0, r0, c8, c3, 0\n"
+                "dsb\n"
+                "isb\n");
+        }
+#endif
 	/* Determine user-side caching policy */
 
 	cache = kgsl_memdesc_get_cachemode(&entry->memdesc);
